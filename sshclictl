@@ -1,0 +1,156 @@
+#!/bin/bash
+KEYS="$HOME/.ssh/authorized_keys"
+KNOWN="$HOME/.ssh/known_keys.d"
+
+function _dir_check()
+{
+	if ! [ -e "$HOME/.ssh" ]; then
+		echo "$HOME/.ssh: no such a directory. set up now with ssh-keygen."
+		exit 1
+	fi
+	if ! [ -f "$KEYS" ]; then
+		[ -e "$KEYS" ] && rm -rf "$KEYS"
+		touch "$KEYS"
+		chmod 600 "$KEYS"
+	fi
+	if ! [ -d "$KNOWN" ]; then
+		[ -e "$KNOWN" ] && rm -rf "$KEYS"
+		mkdir "$KNOWN"
+		chmod 755 "$KNOWN"
+	fi
+}
+function _cli_check()
+{
+	[ -e "$KNOWN/$1.pub" ]
+	return $?
+}
+
+
+function _in_file()
+{
+	if ! _cli_check $1; then
+		return 1
+	fi
+	grep -F "$(cat "$KNOWN/$1.pub")" "$KEYS" > /dev/null
+	return $?
+}
+
+function _add()
+{
+	local uh=$(echo "$i" | awk -F' ' '{print $3}')
+	uh="${uh//@/-}"
+	echo "$1" > "$KNOWN/$uh.pub"
+	echo "A new client public key was found! The new client public key was saved as \"$KNOWN/$uh.pub\""
+}
+
+function _scan()
+{
+	while read i; do
+		grep -F "$i" -rl "$KNOWN" > /dev/null || _add "$i"
+	done < "$KEYS"
+}
+
+function _delete()
+{
+	for i in "$@"; do
+		local t="$KNOWN/$i.pub"
+		if [ -e "$t" ]; then
+			rm "$t"
+			echo "$i was deleted."
+		else
+			echo "$i does not exist in known_keys.d."
+			exit 1
+		fi
+	done
+	exit 0
+}
+
+function _status_()
+{
+	if ! _cli_check "$1"; then
+		return 1
+	fi
+	local r='Disable'
+	_in_file "$1" && r='Enable'
+	echo "$1: $r"
+}
+
+function _usage()
+{
+	echo "$0 [list|status|enable|disable|delete|help|usage|?] <target client>"
+	exit 1
+}
+
+function _list()
+{
+	for i in $KNOWN/*.pub; do
+		i="${i#$KNOWN/}"
+		i="${i%.pub}"
+		echo "$i"
+	done
+	exit 0
+}
+
+function _status()
+{
+	local l=()
+	if [ "$#" = '0' ]; then
+		for i in $KNOWN/*.pub; do
+			i="${i#$KNOWN/}"
+			i="${i%.pub}"
+			l+=("$i")
+		done
+	else
+		l=("$@")
+	fi
+	for i in "${l[@]}"; do
+		_status_ "$i" || echo "Unknown client: $i"
+	done
+	exit 0
+}
+
+function _enable()
+{
+	if ! _cli_check $1; then
+		echo "Unknown client: $1"
+		exit 1
+	fi
+	if ! _in_file "$1"; then
+		cat "$KNOWN/$1.pub" >> "$KEYS"
+	fi
+	echo "Enabled: $1"
+	exit 0
+}
+
+function _disable()
+{
+	if ! _cli_check $1; then
+		echo "Unknown client: $1"
+		exit 1
+	fi
+	if _in_file "$1"; then
+		local tmp=$(mktemp)
+		grep -Fv "$(cat "$KNOWN/$1.pub")" "$KEYS" > "$tmp"
+		mv "$tmp" "$KEYS"
+	fi
+	echo "Disabled: $1"
+	exit 0
+}
+_dir_check
+_scan
+act="$1"
+shift
+case "$act" in
+	"list" )
+		_list "$@";;
+	"status" )
+		_status "$@";;
+	"enable" )
+		_enable "$@";;
+	"disable" )
+		_disable "$@";;
+	"delete" )
+		_delete "$@";;
+	"usage" | "help" | "?" | *)
+		_usage;;
+esac
